@@ -9,7 +9,7 @@ readme = "../README.md"
 homepage = "https://github.com/etnt/nacm-validator"
 repository = "https://github.com/etnt/nacm-validator"
 documentation = "https://docs.rs/nacm-validator"
-keywords = ["nacm", "netconf", "access-control", "network", "yang", "configuration", "merge"]
+keywords = ["nacm", "netconf", "access-control", "yang", "configuration"]
 categories = ["network-programming", "authentication", "config", "parsing"]
 rust-version = "1.70"
 

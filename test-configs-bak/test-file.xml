@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="http://tail-f.com/ns/config/1.0">
+    <nacm xmlns="urn:ietf:params:xml:ns:yang:ietf-netconf-acm">
+        <enable-nacm>true</enable-nacm>
+        <read-default>permit</read-default>
+        <write-default>deny</write-default>
+        <exec-default>deny</exec-default>
+        <groups>
+            <group>
+                <name>test</name>
+                <user-name>test-user</user-name>
+            </group>
+        </groups>
+        <rule-list>
+            <name>test-rules</name>
+            <group>test</group>
+        </rule-list>
+    </nacm>
+</config>
