@@ -1135,6 +1135,15 @@ cargo check
 cargo clean
 ```
 
+### Releasing New Versions
+
+For maintainers publishing new releases to crates.io, see the detailed [RELEASE_HOWTO.md](RELEASE_HOWTO.md) guide which covers:
+
+- Pre-release checklist and version management
+- Step-by-step publication process for both crates
+- Common issues and troubleshooting
+- Post-release verification and tasks
+
 ## 📖 References
 
 - [RFC 8341 - Network Configuration Access Control Model](https://tools.ietf.org/rfc/rfc8341.txt)
