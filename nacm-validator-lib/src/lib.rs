@@ -1,13 +1,21 @@
 //! # NACM Validator - Network Access Control Model with Tail-f ACM Extensions
 //!
 //! This library implements NACM (RFC 8341) access control validation in Rust with comprehensive
-//! support for Tail-f ACM (Access Control Model) extensions. It provides functionality to:
+//! support for Tail-f ACM (Access Control Model) extensions and multiple configuration files. 
+//! It provides functionality to:
 //!
 //! ## Core NACM Features (RFC 8341)
 //! - Parse real-world NACM XML configurations
 //! - Validate access requests against defined rules
 //! - Handle user groups and rule precedence
 //! - Support various operations (CRUD + exec) and path matching
+//!
+//! ## Multiple Configuration Files Support (v0.2.0+)
+//! - **Configuration Merging**: Combine multiple XML files using YANG merge semantics
+//! - **YANG Compliance**: Proper merge rules (last-wins for globals, additive for groups/rules)
+//! - **Rule Precedence**: Automatic precedence adjustment across files
+//! - **Error Resilience**: Handle invalid files gracefully during merging
+//! - **Modular Configuration**: Support team-based and environment-specific configurations
 //!
 //! ## Tail-f ACM Extensions
 //! - **Command Rules**: Context-aware command access control (CLI, WebUI, NETCONF)
@@ -128,6 +136,104 @@
 //!                 if result.should_log { " [LOGGED]" } else { "" });
 //!     }
 //! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ### Multiple Configuration Files with YANG Merge Semantics (v0.2.0+)
+//!
+//! ```rust
+//! use nacm_validator::{NacmConfig, AccessRequest, Operation, RequestContext};
+//!
+//! // First configuration file - base settings and admin group
+//! let base_config = r#"<?xml version="1.0" encoding="UTF-8"?>
+//! <config xmlns="urn:ietf:params:xml:ns:yang:ietf-netconf-acm">
+//!   <nacm>
+//!     <enable-nacm>true</enable-nacm>
+//!     <read-default>deny</read-default>
+//!     <write-default>deny</write-default>
+//!     <exec-default>deny</exec-default>
+//!     <groups>
+//!       <group>
+//!         <name>admin</name>
+//!         <user-name>alice</user-name>
+//!       </group>
+//!     </groups>
+//!     <rule-list>
+//!       <name>admin-rules</name>
+//!       <group>admin</group>
+//!       <rule>
+//!         <name>admin-access</name>
+//!         <action>permit</action>
+//!       </rule>
+//!     </rule-list>
+//!   </nacm>
+//! </config>"#;
+//!
+//! // Second configuration file - operators group and rules  
+//! let ops_config = r#"<?xml version="1.0" encoding="UTF-8"?>
+//! <config xmlns="urn:ietf:params:xml:ns:yang:ietf-netconf-acm">
+//!   <nacm>
+//!     <enable-nacm>true</enable-nacm>
+//!     <read-default>permit</read-default>  <!-- Override base setting -->
+//!     <write-default>deny</write-default>
+//!     <exec-default>deny</exec-default>
+//!     <groups>
+//!       <group>
+//!         <name>admin</name>
+//!         <user-name>bob</user-name>  <!-- Add to existing admin group -->
+//!       </group>
+//!       <group>
+//!         <name>operators</name>      <!-- New group -->
+//!         <user-name>charlie</user-name>
+//!       </group>
+//!     </groups>
+//!     <rule-list>
+//!       <name>operator-rules</name>   <!-- New rule list -->
+//!       <group>operators</group>
+//!       <rule>
+//!         <name>read-only</name>
+//!         <access-operations>read</access-operations>
+//!         <action>permit</action>
+//!       </rule>
+//!     </rule-list>
+//!   </nacm>
+//! </config>"#;
+//!
+//! // Parse individual configurations
+//! let config1 = NacmConfig::from_xml(&base_config)?;
+//! let config2 = NacmConfig::from_xml(&ops_config)?;
+//!
+//! // Merge configurations using YANG merge semantics
+//! let merged_config = NacmConfig::merge(vec![
+//!     (config1, 0),  // File index 0 - lower precedence
+//!     (config2, 1),  // File index 1 - higher precedence
+//! ])?;
+//!
+//! // Result demonstrates YANG merge semantics:
+//! // - Global settings: read-default is "permit" (last-wins from config2)
+//! // - Groups merged additively: admin now has ["alice", "bob"], operators has ["charlie"] 
+//! // - Rule lists combined: admin-rules (precedence 0) and operator-rules (precedence 10000)
+//! // - Rules maintain proper precedence across files
+//!
+//! assert_eq!(merged_config.read_default, nacm_validator::RuleEffect::Permit); // Last-wins
+//! assert_eq!(merged_config.groups.len(), 2); // admin + operators
+//! assert_eq!(merged_config.groups["admin"].users.len(), 2); // alice + bob merged
+//! assert_eq!(merged_config.rule_lists.len(), 2); // admin-rules + operator-rules
+//!
+//! // Validate access with merged configuration
+//! let request = AccessRequest {
+//!     user: "charlie",
+//!     module_name: None,
+//!     rpc_name: None,
+//!     operation: Operation::Read,
+//!     path: None,
+//!     context: Some(&RequestContext::NETCONF),
+//!     command: None,
+//! };
+//!
+//! let result = merged_config.validate(&request);
+//! // Charlie (operator) gets read access via operator-rules from second config
+//! assert_eq!(result.effect, nacm_validator::RuleEffect::Permit);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 

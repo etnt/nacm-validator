@@ -1,34 +1,82 @@
 //! # NACM Validator CLI Tool
 //! 
-//! A command-line interface for validating access requests against NACM (Network Access Control Model) configurations.
+//! A command-line interface for validating access requests against NACM (Network Access Control Model) configurations
+//! with support for both single files and multiple configuration files using YANG merge semantics.
 //! 
 //! This binary provides a convenient way to:
 //! - Validate single access requests with exit code feedback for shell scripts
-//! - Process batch requests from JSON input
+//! - Process batch requests from JSON input  
+//! - Load and merge multiple configuration files from a directory
+//! - Apply YANG merge semantics for modular configuration management
 //! - Output results in multiple formats (text, JSON, exit-code only)
 //! - Integrate NACM validation into automation pipelines
+//! 
+//! ## Configuration Options
+//! 
+//! ### Single Configuration File (Traditional)
+//! Use `--config FILE` to load a single XML configuration file:
+//! 
+//! ```bash
+//! nacm-validator --config /path/to/config.xml --user alice --operation read
+//! ```
+//! 
+//! ### Multiple Configuration Files (v0.2.0+)
+//! Use `--config-dir DIR` to load and merge all XML files from a directory using YANG merge semantics:
+//! 
+//! ```bash
+//! # Load all .xml files from directory, process alphabetically
+//! nacm-validator --config-dir /etc/nacm/configs.d --user alice --operation read --verbose
+//! 
+//! # Files processed in order: 01-base.xml, 02-groups.xml, 03-rules.xml
+//! # YANG merge: globals use last-wins, groups/rules are additive
+//! # Invalid files are skipped with warnings, processing continues
+//! ```
+//! 
+//! **YANG Merge Semantics:**
+//! - **Global settings** (enable-nacm, defaults): Last file wins  
+//! - **Groups and rules**: Merged additively across files
+//! - **Rule precedence**: Maintained with automatic ordering
+//! - **Error resilience**: Invalid files skipped, valid ones processed
 //! 
 //! ## Usage Examples
 //! 
 //! ### Single Request Validation
 //! ```bash
-//! # Basic validation with text output
+//! # Basic validation with single config
 //! nacm-validator --config config.xml --user alice --operation read --module ietf-interfaces
+//! 
+//! # Multiple configs with verbose output showing merge process
+//! nacm-validator --config-dir /etc/nacm --user alice --operation read --verbose
 //! 
 //! # JSON output for programmatic processing
 //! nacm-validator --config config.xml --user bob --operation exec --rpc edit-config --format json
 //! 
 //! # Exit code only for shell scripting
-//! if nacm-validator --config config.xml --user charlie --operation create --format exit-code; then
+//! if nacm-validator --config-dir /etc/nacm --user charlie --operation create --format exit-code; then
 //!     echo "Access granted"
 //! fi
 //! ```
 //! 
 //! ### Batch Processing
 //! ```bash
-//! # Process multiple requests from JSON
+//! # Process multiple requests from JSON with merged configurations
 //! echo '{"user":"alice","operation":"read","module":"ietf-interfaces"}' | \
-//!   nacm-validator --config config.xml --json-input
+//!   nacm-validator --config-dir /etc/nacm --json-input
+//! 
+//! # Batch processing with single config (traditional)  
+//! cat requests.json | nacm-validator --config config.xml --json-input
+//! ```
+//! 
+//! ### Integration Examples
+//! ```bash
+//! # Validate configuration merge before deployment
+//! nacm-validator --config-dir ./staging-configs --user test-user --operation read --verbose
+//! 
+//! # Shell script integration with error handling
+//! if ! nacm-validator --config-dir /etc/nacm --user "$USER" --operation "$OP" --format exit-code; then
+//!     echo "Access denied for $USER to perform $OP" >&2
+//!     exit 1
+//! fi
 //! ```
 //! 
 //! ## Exit Codes
