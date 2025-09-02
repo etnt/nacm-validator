@@ -44,7 +44,7 @@ To use the validator library in your own Rust project, add it to your `Cargo.tom
 
 ```toml
 [dependencies]
-nacm-validator = "0.1"
+nacm-validator = "0.2"
 ```
 
 You can also use the git dependency for the latest development version:
@@ -52,7 +52,7 @@ You can also use the git dependency for the latest development version:
 ```toml
 [dependencies]
 # For the latest published version (recommended):
-nacm-validator = "0.1"
+nacm-validator = "0.2"
 
 # Or for the latest development version:
 # nacm-validator = { git = "https://github.com/etnt/nacm-validator.git", package = "nacm-validator" }
@@ -87,6 +87,87 @@ cargo run --example tailf_acm_demo
 ```
 
 ## Quick Start
+
+### CLI Tool - Multiple Configuration Files (NEW!)
+
+The NACM Validator now supports loading and merging multiple configuration files from a directory, enabling modular configuration management:
+
+```bash
+# Load multiple configuration files from a directory
+./target/release/nacm-validator \
+    --config-dir nacm-validator-bin/examples/test-configs \
+    --user alice \
+    --operation read \
+    --verbose
+# Output: Loads and merges all XML files in nacm-validator-bin/examples/test-configs/ directory
+
+# Run the comprehensive multiple files demo
+./nacm-validator-bin/examples/multiple_files_demo.sh
+
+# Traditional single file still works (backward compatible)
+./target/release/nacm-validator \
+    --config single-config.xml \
+    --user alice \
+    --operation read
+```
+
+**Key Benefits of Multiple Files:**
+- 🔧 **Modular Configuration**: Split settings across logical files
+- 👥 **Team Collaboration**: Different teams manage separate files
+- 🌍 **Environment-Specific**: Override settings per environment  
+- 🔄 **YANG Compliance**: Proper YANG merge semantics implementation
+- ⚠️ **Error Resilience**: Invalid files don't break entire configuration
+- 🔙 **Backward Compatible**: Single file mode still fully supported
+
+#### Multiple Files Configuration Structure
+
+The `nacm-validator-bin/examples/test-configs/` directory demonstrates a typical modular setup:
+
+```
+nacm-validator-bin/examples/test-configs/
+├── 01-base.xml          # Base NACM settings and admin group
+├── 02-operators.xml     # Operator groups and data access rules  
+├── 03-commands.xml      # Command-based access rules (Tail-f ACM)
+├── invalid.xml          # Invalid XML to demonstrate error handling
+└── test-file.xml        # Additional config to show merging capabilities
+```
+
+**File Processing Rules:**
+- Files are processed in **alphabetical order** (01-, 02-, 03-, etc.)
+- **YANG merge semantics**: Global settings use last-wins, groups/rules are additive
+- **Error resilience**: Invalid files are skipped with warnings
+- **Rule precedence**: Later files get higher precedence numbers automatically
+
+#### Example Multiple Files Usage
+
+```bash
+# Load all configurations and show merge results
+./target/release/nacm-validator \
+    --config-dir nacm-validator-bin/examples/test-configs \
+    --user alice \
+    --operation read \
+    --verbose
+
+# Output shows:
+# Loading config directory: "nacm-validator-bin/examples/test-configs"
+# Found 5 XML configuration files:
+#   1. "01-base.xml"
+#   2. "02-operators.xml" 
+#   3. "03-commands.xml"
+#   4. "invalid.xml"
+#   5. "test-file.xml"
+# ✓ Successfully loaded: "01-base.xml"
+# ✓ Successfully loaded: "02-operators.xml"
+# ✓ Successfully loaded: "03-commands.xml"
+# ✗ Failed to load "invalid.xml": Syntax error...
+# ✓ Successfully loaded: "test-file.xml"
+# Warning: 1 out of 5 files failed to load, continuing with 4 valid configurations
+# Merging 4 configurations...
+# ✓ Configuration merge completed
+#   - 4 groups loaded
+#   - 3 rule lists loaded
+#   - 3 total rules loaded
+```
 
 ### CLI Tool - Traditional NACM
 
@@ -167,6 +248,9 @@ println!("Access {}: {}",
 
 ### Run Examples
 ```bash
+# NEW: Multiple files configuration demo
+./nacm-validator-bin/examples/multiple_files_demo.sh
+
 # Comprehensive feature demonstration
 cargo run --example tailf_acm_comprehensive_demo
 
@@ -178,6 +262,15 @@ cd nacm-validator-bin/examples && bash json_batch_example.sh
 ```
 
 ## 🚀 Features
+
+### NEW: Multiple Configuration Files Support
+- **Directory Loading**: Load and merge multiple XML files from a directory using `--config-dir`
+- **YANG Merge Semantics**: Proper implementation of YANG merge rules for configuration combining
+- **File Precedence**: Alphabetical file ordering determines merge precedence
+- **Error Resilience**: Invalid files are skipped with warnings, valid ones continue processing
+- **Mutual Exclusion**: `--config` and `--config-dir` options are mutually exclusive for safety
+- **Backward Compatible**: Existing `--config` single file usage unchanged
+- **Team Workflows**: Enables modular configuration management and team collaboration
 
 ### Standard NACM (RFC 8341)
 - **XML Configuration Parsing**: Parse real-world NACM XML configurations
@@ -319,24 +412,32 @@ Access validation results:
 
 ```
 nacm-validator/
-├── src/
-│   ├── lib.rs                              # Main library with Tail-f ACM extensions
-│   └── bin/
-│       └── nacm-validator.rs               # Enhanced CLI tool with context support
-├── examples/
-│   ├── validate_access.rs                  # Basic access validation example
-│   ├── tailf_acm_demo.rs                   # Tail-f ACM features demonstration
-│   ├── tailf_acm_comprehensive_demo.rs     # Comprehensive feature showcase
-│   ├── bash_examples.sh                    # Bash integration with Tail-f ACM
-│   ├── json_batch_example.sh               # JSON batch processing example
-│   ├── README.md                           # Examples documentation
-│   └── data/
-│       ├── aaa_ncm_init.xml                # Basic NACM configuration (insecure)
-│       ├── aaa_ncm_init_secure.xml         # Secure NACM configuration  
-│       └── tailf_acm_example.xml           # Comprehensive Tail-f ACM example
+├── nacm-validator-lib/
+│   ├── src/lib.rs                          # Main library with Tail-f ACM extensions
+│   └── examples/
+│       ├── validate_access.rs              # Basic access validation example
+│       ├── tailf_acm_demo.rs               # Tail-f ACM features demonstration
+│       ├── tailf_acm_comprehensive_demo.rs # Comprehensive feature showcase
+│       ├── README.md                       # Examples documentation
+│       └── data/
+│           ├── aaa_ncm_init.xml            # Basic NACM configuration (insecure)
+│           ├── aaa_ncm_init_secure.xml     # Secure NACM configuration  
+│           └── tailf_acm_example.xml       # Comprehensive Tail-f ACM example
+├── nacm-validator-bin/
+│   ├── src/main.rs                         # Enhanced CLI tool with multiple files support
+│   └── examples/
+│       ├── bash_examples.sh                # Bash integration with Tail-f ACM
+│       ├── json_batch_example.sh           # JSON batch processing example
+│       ├── multiple_files_demo.sh          # NEW: Multiple files functionality demo
+│       └── test-configs/                   # NEW: Example multiple config files
+│           ├── 01-base.xml                 # Base configuration
+│           ├── 02-operators.xml            # Operator groups and rules
+│           ├── 03-commands.xml             # Command-based rules
+│           ├── invalid.xml                 # Invalid XML (for error demo)
+│           └── test-file.xml               # Additional config (for merging demo)
 ├── doc/
 │   └── rfc-tailf-acm-proposal.md           # Tail-f ACM RFC proposal document
-├── Cargo.toml                              # Project configuration
+├── Cargo.toml                              # Workspace configuration
 └── README.md                               # This file
 ```
 
@@ -379,7 +480,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-nacm-validator = "0.1.0"
+nacm-validator = "0.2.0"
 ```
 
 ### Basic Library Usage
@@ -721,6 +822,7 @@ cargo build --bin nacm-validator --release
 ```
 Options:
   -c, --config <CONFIG>        Path to the NACM XML configuration file
+      --config-dir <DIR>       Path to directory containing multiple XML files (NEW!)
   -u, --user <USER>            Username making the request
   -m, --module <MODULE>        Module name (optional)
   -r, --rpc <RPC>              RPC name (optional)
@@ -731,6 +833,26 @@ Options:
       --format <FORMAT>        Output format [text, json, exit-code]
   -v, --verbose                Verbose output
       --json-input             JSON input mode - read requests from stdin
+```
+
+**Multiple Files Usage:**
+```bash
+# Load all XML files from directory (NEW!)
+./target/release/nacm-validator \
+    --config-dir /etc/nacm/configs.d \
+    --user alice \
+    --operation read \
+    --verbose
+
+# Files are processed alphabetically: 01-base.xml, 02-groups.xml, etc.
+# Later files can override settings from earlier files (YANG merge semantics)
+
+# Cannot combine both options (mutual exclusion)
+./target/release/nacm-validator \
+    --config single.xml \
+    --config-dir multi/ \
+    --user alice --operation read
+# Error: cannot use both --config and --config-dir
 ```
 
 ### Enhanced Features

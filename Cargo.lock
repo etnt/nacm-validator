@@ -130,17 +130,7 @@ checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 
 [[package]]
 name = "nacm-validator"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde-xml-rs",
-]
-
-[[package]]
-name = "nacm-validator"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad9c65a49d967e3492c7fea08e8196482f97bc91bd39fb2217a0b523f4207969"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde-xml-rs",
@@ -148,10 +138,10 @@ dependencies = [
 
 [[package]]
 name = "nacm-validator-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
- "nacm-validator 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "nacm-validator",
  "serde",
  "serde_json",
 ]

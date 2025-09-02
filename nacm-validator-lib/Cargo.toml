@@ -1,16 +1,16 @@
 [package]
 name = "nacm-validator"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["T. Tornkvist <kruskakli@gmail.com>"]
 license = "MPL-2.0"
-description = "NACM (Network Access Control Model) validator with Tail-f ACM extensions"
+description = "NACM (Network Access Control Model) validator with Tail-f ACM extensions and multiple configuration files support"
 readme = "../README.md"
 homepage = "https://github.com/etnt/nacm-validator"
 repository = "https://github.com/etnt/nacm-validator"
 documentation = "https://docs.rs/nacm-validator"
-keywords = ["nacm", "netconf", "access-control", "network", "yang"]
-categories = ["network-programming", "authentication", "config"]
+keywords = ["nacm", "netconf", "access-control", "network", "yang", "configuration", "merge"]
+categories = ["network-programming", "authentication", "config", "parsing"]
 rust-version = "1.70"
 
 [lib]

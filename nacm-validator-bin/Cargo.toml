@@ -1,14 +1,14 @@
 [package]
 name = "nacm-validator-cli"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["T. Tornkvist <kruskakli@gmail.com>"]
 license = "MPL-2.0"
-description = "CLI for NACM (Network Access Control Model) validator with Tail-f ACM extensions"
+description = "CLI for NACM (Network Access Control Model) validator with Tail-f ACM extensions and multiple configuration files support"
 readme = "../README.md"
 homepage = "https://github.com/etnt/nacm-validator"
 repository = "https://github.com/etnt/nacm-validator"
-keywords = ["nacm", "netconf", "access-control", "cli", "validator"]
+keywords = ["nacm", "netconf", "access-control", "cli", "validator", "configuration"]
 categories = ["network-programming", "authentication", "command-line-utilities"]
 rust-version = "1.70"
 
@@ -18,7 +18,9 @@ path = "src/main.rs"
 doc = false
 
 [dependencies]
-nacm-validator = "0.1"
+# For development: use local path
+# For release: change to nacm-validator = "0.2.0"
+nacm-validator = { path = "../nacm-validator-lib", version = "0.2.0" }
 clap = { version = "4.4", features = ["derive", "color"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

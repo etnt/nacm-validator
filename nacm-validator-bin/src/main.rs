@@ -37,7 +37,7 @@
 //! - **1**: Access denied  
 //! - **2**: Error (invalid config, missing file, etc.)
 
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, ValueEnum};
 use nacm_validator::{AccessRequest, NacmConfig, Operation, RuleEffect, RequestContext};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -57,12 +57,9 @@ use std::process;
 #[derive(Parser)]
 #[command(author, version, about = "NACM Access Control Validator", long_about = None)]
 struct Cli {
-    /// Path to the NACM XML configuration file
-    /// 
-    /// This is the only truly required argument in all modes.
-    /// The configuration file contains the NACM groups, rules, and policies.
-    #[arg(short, long)]
-    config: PathBuf,
+    /// Configuration source - either a file or directory
+    #[command(flatten)]
+    config_source: ConfigSource,
 
     /// Username making the request
     /// 
@@ -135,6 +132,22 @@ struct Cli {
     /// instead of using command-line arguments. Useful for batch processing.
     #[arg(long)]
     json_input: bool,
+}
+
+/// Configuration source options
+/// 
+/// This struct groups the mutually exclusive configuration source options.
+/// Users must specify either a single file or a directory containing multiple files.
+#[derive(Args)]
+#[group(required = true, multiple = false)]
+struct ConfigSource {
+    /// Path to the NACM XML configuration file
+    #[arg(short, long)]
+    config: Option<PathBuf>,
+
+    /// Path to directory containing NACM XML configuration files
+    #[arg(long)]
+    config_dir: Option<PathBuf>,
 }
 
 /// Command-line operation argument wrapper
@@ -304,8 +317,8 @@ fn main() {
     // If parsing fails (invalid args), clap automatically shows help and exits
     let cli = Cli::parse();
 
-    // Load NACM configuration from the specified file
-    let config = match load_config(&cli.config) {
+    // Load NACM configuration from the specified source
+    let config = match load_configs(&cli) {
         Ok(config) => config,
         Err(e) => {
             eprintln!("Error loading config: {}", e);
@@ -315,7 +328,11 @@ fn main() {
 
     // Show configuration summary if verbose mode is enabled
     if cli.verbose {
-        eprintln!("Loaded NACM config from: {:?}", cli.config);
+        match (&cli.config_source.config, &cli.config_source.config_dir) {
+            (Some(file), None) => eprintln!("Loaded NACM config from file: {:?}", file),
+            (None, Some(dir)) => eprintln!("Loaded NACM config from directory: {:?}", dir),
+            _ => unreachable!("clap ensures one option is present"),
+        }
         eprintln!("NACM enabled: {}", config.enable_nacm);
         eprintln!("Groups: {}", config.groups.len());
         eprintln!("Rule lists: {}", config.rule_lists.len());
@@ -350,10 +367,223 @@ fn main() {
     }
 }
 
-/// Load and parse NACM configuration from file
+/// Load and parse NACM configuration from either file or directory
 /// 
-/// This helper function encapsulates the file loading and XML parsing logic.
-/// It provides a clean error boundary and consistent error handling.
+/// This function dispatches to the appropriate loading function based on
+/// the configuration source specified in the CLI arguments.
+/// 
+/// ## Parameters
+/// 
+/// * `cli` - Parsed command-line arguments
+/// 
+/// ## Returns
+/// 
+/// * `Ok(NacmConfig)` - Successfully loaded and parsed configuration
+/// * `Err(Box<dyn Error>)` - Configuration loading failed
+fn load_configs(cli: &Cli) -> Result<NacmConfig, Box<dyn std::error::Error>> {
+    match &cli.config_source {
+        ConfigSource { config: Some(file), .. } => {
+            if cli.verbose {
+                eprintln!("Loading single config file: {:?}", file);
+            }
+            load_single_config(file)
+        },
+        ConfigSource { config_dir: Some(dir), .. } => {
+            if cli.verbose {
+                eprintln!("Loading config directory: {:?}", dir);
+            }
+            load_directory_configs(dir, cli.verbose)
+        },
+        _ => unreachable!("clap ensures one option is present"),
+    }
+}
+
+/// Load and parse NACM configuration from directory
+/// 
+/// This function discovers XML files in the specified directory, loads and
+/// parses each one, then merges them according to YANG merge semantics.
+/// 
+/// ## Parameters
+/// 
+/// * `dir` - Path to directory containing XML configuration files
+/// * `verbose` - Whether to show detailed loading information
+/// 
+/// ## Returns
+/// 
+/// * `Ok(NacmConfig)` - Successfully merged configuration
+/// * `Err(Box<dyn Error>)` - Directory loading or merging failed
+fn load_directory_configs(dir: &PathBuf, verbose: bool) -> Result<NacmConfig, Box<dyn std::error::Error>> {
+    // Validate directory exists
+    if !dir.is_dir() {
+        return Err(format!("Config directory does not exist: {:?}", dir).into());
+    }
+
+    // Discover XML files
+    let xml_files = discover_xml_files(dir)?;
+    
+    if xml_files.is_empty() {
+        eprintln!("Warning: No XML files found in directory {:?}", dir);
+        return Ok(create_default_config());
+    }
+
+    if verbose {
+        eprintln!("Found {} XML configuration files:", xml_files.len());
+        for (idx, file) in xml_files.iter().enumerate() {
+            eprintln!("  {}. {:?}", idx + 1, file.file_name().unwrap_or_default());
+        }
+    }
+
+    // Load and parse each file
+    let mut configs: Vec<(NacmConfig, usize)> = Vec::new();
+    let mut errors = Vec::new();
+
+    for (file_index, file_path) in xml_files.iter().enumerate() {
+        match load_single_config(file_path) {
+            Ok(config) => {
+                if verbose {
+                    eprintln!("✓ Successfully loaded: {:?}", file_path.file_name().unwrap_or_default());
+                }
+                configs.push((config, file_index));
+            },
+            Err(e) => {
+                let error_msg = format!("Failed to load {:?}: {}", file_path.file_name().unwrap_or_default(), e);
+                eprintln!("✗ {}", error_msg);
+                errors.push(error_msg);
+            }
+        }
+    }
+
+    // Check if we have any valid configurations
+    if configs.is_empty() {
+        return Err(format!(
+            "All {} configuration files failed to load:\n{}",
+            xml_files.len(),
+            errors.join("\n")
+        ).into());
+    }
+
+    if !errors.is_empty() {
+        eprintln!("Warning: {} out of {} files failed to load, continuing with {} valid configurations", 
+                  errors.len(), xml_files.len(), configs.len());
+    }
+
+    // Merge configurations
+    if verbose {
+        eprintln!("Merging {} configurations...", configs.len());
+    }
+    
+    let merged_config = NacmConfig::merge(configs)?;
+    
+    if verbose {
+        eprintln!("✓ Configuration merge completed");
+        eprintln!("  - {} groups loaded", merged_config.groups.len());
+        eprintln!("  - {} rule lists loaded", merged_config.rule_lists.len());
+        let total_rules: usize = merged_config.rule_lists.iter()
+            .map(|rl| rl.rules.len() + rl.command_rules.len())
+            .sum();
+        eprintln!("  - {} total rules loaded", total_rules);
+    }
+
+    Ok(merged_config)
+}
+
+/// Discover XML files in a directory
+/// 
+/// This function scans the specified directory for valid XML configuration files,
+/// applying filtering rules to exclude hidden, backup, and temporary files.
+/// 
+/// ## Parameters
+/// 
+/// * `dir` - Directory path to scan
+/// 
+/// ## Returns
+/// 
+/// * `Ok(Vec<PathBuf>)` - Sorted list of XML file paths
+/// * `Err(std::io::Error)` - Directory reading failed
+fn discover_xml_files(dir: &PathBuf) -> Result<Vec<PathBuf>, std::io::Error> {
+    let mut xml_files = Vec::new();
+    
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.is_file() && is_valid_xml_file(&path) {
+            xml_files.push(path);
+        }
+    }
+    
+    // Sort alphabetically for deterministic processing order
+    xml_files.sort();
+    Ok(xml_files)
+}
+
+/// Check if a file is a valid XML configuration file
+/// 
+/// This function applies filtering rules to determine if a file should be
+/// processed as an XML configuration file.
+/// 
+/// ## Filtering Rules
+/// 
+/// * Must end with .xml (case insensitive)
+/// * Skip hidden files (starting with '.')
+/// * Skip backup files (ending with '~', '.bak', '.orig')
+/// * Skip temporary files (containing '.tmp')
+/// 
+/// ## Parameters
+/// 
+/// * `path` - File path to check
+/// 
+/// ## Returns
+/// 
+/// * `true` if the file should be processed
+/// * `false` if the file should be skipped
+fn is_valid_xml_file(path: &PathBuf) -> bool {
+    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+        // Skip hidden files and backup files
+        if filename.starts_with('.') || 
+           filename.ends_with('~') || 
+           filename.ends_with(".bak") || 
+           filename.ends_with(".orig") ||
+           filename.contains(".tmp") {
+            return false;
+        }
+        
+        // Must have .xml extension (case insensitive)
+        filename.to_lowercase().ends_with(".xml")
+    } else {
+        false
+    }
+}
+
+/// Create a default configuration when no config files are found
+/// 
+/// This provides safe defaults when a directory is empty or no valid
+/// configuration files can be loaded.
+/// 
+/// ## Returns
+/// 
+/// * `NacmConfig` with safe defaults (NACM disabled, deny-by-default)
+fn create_default_config() -> NacmConfig {
+    use std::collections::HashMap;
+    
+    NacmConfig {
+        enable_nacm: false,  // Safe default when no configs found
+        read_default: RuleEffect::Deny,
+        write_default: RuleEffect::Deny,
+        exec_default: RuleEffect::Deny,
+        cmd_read_default: RuleEffect::Permit,
+        cmd_exec_default: RuleEffect::Deny,
+        log_if_default_permit: false,
+        log_if_default_deny: false,
+        groups: HashMap::new(),
+        rule_lists: Vec::new(),
+    }
+}
+
+/// Load and parse NACM configuration from single file
+/// 
+/// This helper function encapsulates the file loading and XML parsing logic
+/// for a single configuration file.
 /// 
 /// ## Parameters
 /// 
@@ -370,7 +600,7 @@ fn main() {
 /// - I/O errors (file not found, permission denied)
 /// - XML parsing errors (malformed XML, unknown elements)
 /// - NACM validation errors (invalid rule effects, unknown operations)
-fn load_config(config_path: &PathBuf) -> Result<NacmConfig, Box<dyn std::error::Error>> {
+fn load_single_config(config_path: &PathBuf) -> Result<NacmConfig, Box<dyn std::error::Error>> {
     // Read the entire file into memory as a UTF-8 string
     // This will fail if the file doesn't exist or isn't readable
     let xml_content = std::fs::read_to_string(config_path)?;

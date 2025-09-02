@@ -799,6 +799,226 @@ struct XmlCommandRule {
 }
 
 impl NacmConfig {
+    /// Merge multiple NACM configurations into a single configuration
+    /// 
+    /// Implements YANG merge semantics where:
+    /// - Leaf values (global settings) use last-wins strategy
+    /// - List elements (groups, rules) are merged additively
+    /// - Rule precedence is adjusted based on source file ordering
+    /// 
+    /// # Arguments
+    /// 
+    /// * `configs` - Vector of (config, file_index) tuples where file_index determines precedence
+    /// 
+    /// # Returns
+    /// 
+    /// * `Ok(NacmConfig)` - Successfully merged configuration
+    /// * `Err(Box<dyn Error>)` - Merge operation failed
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// use nacm_validator::NacmConfig;
+    /// 
+    /// let xml1 = r#"<config xmlns="http://tail-f.com/ns/config/1.0">
+    ///   <nacm xmlns="urn:ietf:params:xml:ns:yang:ietf-netconf-acm">
+    ///     <enable-nacm>true</enable-nacm>
+    ///     <read-default>deny</read-default>
+    ///     <write-default>deny</write-default>
+    ///     <exec-default>deny</exec-default>
+    ///     <groups><group><name>admin</name><user-name>alice</user-name></group></groups>
+    ///     <rule-list><name>admin-rules</name><group>admin</group></rule-list>
+    ///   </nacm>
+    /// </config>"#;
+    /// let xml2 = r#"<config xmlns="http://tail-f.com/ns/config/1.0">
+    ///   <nacm xmlns="urn:ietf:params:xml:ns:yang:ietf-netconf-acm">
+    ///     <enable-nacm>true</enable-nacm>
+    ///     <read-default>permit</read-default>
+    ///     <write-default>deny</write-default>
+    ///     <exec-default>deny</exec-default>
+    ///     <groups><group><name>ops</name><user-name>bob</user-name></group></groups>
+    ///     <rule-list><name>ops-rules</name><group>ops</group></rule-list>
+    ///   </nacm>
+    /// </config>"#;
+    /// 
+    /// let config1 = NacmConfig::from_xml(xml1).unwrap();
+    /// let config2 = NacmConfig::from_xml(xml2).unwrap();
+    /// 
+    /// let merged = NacmConfig::merge(vec![
+    ///     (config1, 0),
+    ///     (config2, 1),
+    /// ]).unwrap();
+    /// assert_eq!(merged.groups.len(), 2); // Both groups merged
+    /// ```
+    pub fn merge(configs: Vec<(NacmConfig, usize)>) -> Result<Self, Box<dyn std::error::Error>> {
+        if configs.is_empty() {
+            return Err("Cannot merge empty configuration list".into());
+        }
+        
+        if configs.len() == 1 {
+            return Ok(configs.into_iter().next().unwrap().0);
+        }
+        
+        // Start with default configuration
+        let mut merged = Self::default();
+        
+        // Merge each configuration in order
+        for (config, file_index) in configs {
+            merged = merged.merge_single_config(config, file_index)?;
+        }
+        
+        Ok(merged)
+    }
+    
+    /// Create a default NACM configuration
+    /// 
+    /// Returns a configuration with reasonable defaults:
+    /// - NACM enabled
+    /// - All operations denied by default
+    /// - No logging by default
+    /// - Empty groups and rule lists
+    pub fn default() -> Self {
+        Self {
+            enable_nacm: true,
+            read_default: RuleEffect::Deny,
+            write_default: RuleEffect::Deny,
+            exec_default: RuleEffect::Deny,
+            cmd_read_default: RuleEffect::Permit,
+            cmd_exec_default: RuleEffect::Permit,
+            log_if_default_permit: false,
+            log_if_default_deny: false,
+            groups: HashMap::new(),
+            rule_lists: Vec::new(),
+        }
+    }
+    
+    /// Merge a single configuration into this one
+    /// 
+    /// # Arguments
+    /// 
+    /// * `other` - Configuration to merge into this one
+    /// * `file_index` - Index used for rule precedence adjustment
+    /// 
+    /// # Returns
+    /// 
+    /// * `Result<NacmConfig, Box<dyn Error>>` - Merged configuration or error
+    fn merge_single_config(mut self, other: NacmConfig, file_index: usize) -> Result<Self, Box<dyn std::error::Error>> {
+        // Merge leaf values (last-wins strategy)
+        self.enable_nacm = other.enable_nacm;
+        self.read_default = other.read_default;
+        self.write_default = other.write_default;
+        self.exec_default = other.exec_default;
+        self.cmd_read_default = other.cmd_read_default;
+        self.cmd_exec_default = other.cmd_exec_default;
+        self.log_if_default_permit = other.log_if_default_permit;
+        self.log_if_default_deny = other.log_if_default_deny;
+        
+        // Merge groups (additive)
+        for (group_name, group) in other.groups {
+            if self.groups.contains_key(&group_name) {
+                // Group exists - merge users additively
+                self.merge_group(&group_name, group)?;
+            } else {
+                // New group - add directly
+                self.groups.insert(group_name, group);
+            }
+        }
+        
+        // Merge rule lists (additive with precedence adjustment)
+        for mut rule_list in other.rule_lists {
+            // Adjust rule precedence based on file order
+            self.adjust_rule_orders(&mut rule_list, file_index);
+            
+            // Check if rule list with same name exists
+            if let Some(existing_idx) = self.rule_lists.iter().position(|rl| rl.name == rule_list.name) {
+                // Merge with existing rule list
+                self.merge_rule_list(existing_idx, rule_list)?;
+            } else {
+                // New rule list - add directly
+                self.rule_lists.push(rule_list);
+            }
+        }
+        
+        Ok(self)
+    }
+    
+    /// Merge a group with an existing group
+    /// 
+    /// # Arguments
+    /// 
+    /// * `group_name` - Name of the group to merge
+    /// * `new_group` - Group data to merge in
+    /// 
+    /// # Returns
+    /// 
+    /// * `Result<(), Box<dyn Error>>` - Success or error
+    fn merge_group(&mut self, group_name: &str, new_group: NacmGroup) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(existing_group) = self.groups.get_mut(group_name) {
+            // Merge users additively (avoid duplicates)
+            for user in new_group.users {
+                if !existing_group.users.contains(&user) {
+                    existing_group.users.push(user);
+                }
+            }
+            
+            // Update GID if provided (last-wins)
+            if new_group.gid.is_some() {
+                existing_group.gid = new_group.gid;
+            }
+        }
+        Ok(())
+    }
+    
+    /// Adjust rule orders based on file index
+    /// 
+    /// Rules from files loaded later get higher precedence numbers,
+    /// ensuring that rules from earlier files take precedence.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `rule_list` - Rule list to adjust
+    /// * `file_index` - File index for precedence calculation
+    fn adjust_rule_orders(&self, rule_list: &mut NacmRuleList, file_index: usize) {
+        // Adjust regular rules
+        for rule in &mut rule_list.rules {
+            rule.order = (file_index as u32) * 10000 + rule.order;
+        }
+        
+        // Adjust command rules
+        for cmd_rule in &mut rule_list.command_rules {
+            cmd_rule.order = (file_index as u32) * 10000 + cmd_rule.order;
+        }
+    }
+    
+    /// Merge a rule list with an existing rule list
+    /// 
+    /// # Arguments
+    /// 
+    /// * `existing_idx` - Index of existing rule list
+    /// * `new_rule_list` - New rule list to merge in
+    /// 
+    /// # Returns
+    /// 
+    /// * `Result<(), Box<dyn Error>>` - Success or error
+    fn merge_rule_list(&mut self, existing_idx: usize, new_rule_list: NacmRuleList) -> Result<(), Box<dyn std::error::Error>> {
+        let existing = &mut self.rule_lists[existing_idx];
+        
+        // Merge groups additively
+        for group in new_rule_list.groups {
+            if !existing.groups.contains(&group) {
+                existing.groups.push(group);
+            }
+        }
+        
+        // Merge rules additively
+        existing.rules.extend(new_rule_list.rules);
+        
+        // Merge command rules additively
+        existing.command_rules.extend(new_rule_list.command_rules);
+        
+        Ok(())
+    }
+
     /// Parse NACM configuration from XML string
     /// 
     /// This function takes an XML string containing NACM configuration
